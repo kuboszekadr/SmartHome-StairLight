@@ -1,0 +1,3 @@
+[submodule "lib/SmartHome-MicroContoler-Lib"]
+	path = lib/SmartHome-MicroContoler-Lib
+	url = git@github.com:kuboszekadr/SmartHome-MicroContoler-Lib.git
