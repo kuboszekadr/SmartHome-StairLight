@@ -67,6 +67,11 @@ void initTasks()
       "0 */2 * * * *",
       WiFiManager::manageConnection,
       false);
+
+  Cron.create(
+      "*/30 * * * * *",
+      Device::sendHeartbeat,
+      false);       
 }
 
 void handleLightRelay()
