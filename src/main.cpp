@@ -10,10 +10,14 @@
 #include <SPIFFS.h>
 #include <CronAlarms.h>
 
-const char VERSION[8] = "v1.0.0";
+#include <esp_task_wdt.h>
+
+const char VERSION[8] = "v1.2.1";
 
 Logger logger = Logger("main");
 Relay relay = Relay("Switch", 33);
+
+#define WDT_TIMEOUT 20
 
 void initTasks();
 void printSetup();
@@ -23,126 +27,133 @@ int8_t turnOnOff(float current_value, float threshold_value);
 float getValue();
 
 void GmailNotification(
-    const char *title,
-    const char *message);
+	const char *title,
+	const char *message);
 
 void setup()
 {
-  Serial.begin(115200);
+	Serial.begin(115200);
 
-  Device::setup();
+	esp_task_wdt_init(WDT_TIMEOUT, true);
+	esp_task_wdt_add(NULL);
 
-  Logger::addStream(Loggers::logToSerial);
-  Logger::addStream(Loggers::logToAPI);
+	Device::setup();
 
-  Notification::addStream(GmailNotification);
-  ESP32WebServer::start();
+	Logger::addStream(Loggers::logToSerial);
+	Logger::addStream(Loggers::logToAPI);
 
-  initTasks();
-  printSetup();
+	Notification::addStream(GmailNotification);
+	ESP32WebServer::start();
 
-  Notification::push("StarLights", "Device started");
+	initTasks();
+	printSetup();
+
+	char msg[64];
+	snprintf(msg, 63, "Device started \nFirmware version: %s", VERSION);
+	Notification::push("StarLights", msg);
 }
 
 void loop()
 {
-  Cron.delay();
+	Cron.delay();
+	esp_task_wdt_reset();
 }
 
 void initTasks()
 {
-  logger.log("Initalizing tasks...");
-  Cron.create(
-      "0 */1 * * * *",
-      []()
-      { handleLightRelay(); },
-      false);
+	logger.log("Initalizing tasks...");
+	Cron.create(
+		"0 */1 * * * *",
+		[]()
+		{ handleLightRelay(); },
+		false);
 
-  Cron.create(
-      "0 0 4 * * *",
-      Device::setupTime,
-      false);
+	Cron.create(
+		"0 0 4 * * *",
+		Device::setupTime,
+		false);
 
-  Cron.create(
-      "0 */2 * * * *",
-      WiFiManager::manageConnection,
-      false);
+	Cron.create(
+		"0 */2 * * * *",
+		WiFiManager::manageConnection,
+		false);
 
-  Cron.create(
-      "*/30 * * * * *",
-      Device::sendHeartbeat,
-      false);       
+	Cron.create(
+		"*/30 * * * * *",
+		Device::sendHeartbeat,
+		false);
+
 }
 
 void handleLightRelay()
 {
-  float value = getValue();
-  float threshold = 30.0;
-  int8_t turn_on_off = turnOnOff(threshold, value);
+	float value = getValue();
+	float threshold = 30.0;
+	int8_t turn_on_off = turnOnOff(threshold, value);
 
-  if (turn_on_off == 1)
-  {
-    Notification::push("StarLights - Lights on", "");
-    relay.turnOn();
-  }
-  else if (turn_on_off == 0)
-  {
-    Notification::push("StarLights - Lights off", "");
-    relay.turnOff();
-  }
+	if (turn_on_off == 1)
+	{
+		Notification::push("StarLights - Lights on", "");
+		relay.turnOn();
+	}
+	else if (turn_on_off == 0)
+	{
+		Notification::push("StarLights - Lights off", "");
+		relay.turnOff();
+	}
 }
 
 int8_t turnOnOff(float threshold, float current_value)
 {
-  static int8_t on_off = -1; // Not changed state
+	static int8_t on_off = -1; // Not changed state
 
-  int8_t triggered = int8_t(current_value < threshold);
-  int8_t state_changed = on_off != triggered;
+	int8_t triggered = int8_t(current_value < threshold);
+	int8_t state_changed = on_off != triggered;
 
-  int8_t result = -1;
-  if (state_changed)
-  {
-    result = bool(triggered);
-    on_off = result;  
-  }
-  return result;
+	int8_t result = -1;
+	if (state_changed)
+	{
+		result = bool(triggered);
+		on_off = result;
+	}
+	return result;
 }
 
 float getValue()
 {
-  logger.log("Getting solar current reading...");
+	logger.log("Getting solar current reading...");
 
-  StaticJsonDocument<128> doc;
-  JsonObject payload = doc.to<JsonObject>();
+	StaticJsonDocument<128> doc;
+	JsonObject payload = doc.to<JsonObject>();
 
-  payload["window"] = 60;
-  String response_raw = Device::device->getData(payload, "solar_panel_value", "v2.0");
+	payload["window"] = 120;
+	String response_raw = Device::device->getData(payload, "solar_panel_value", "v2.0");
 
-  StaticJsonDocument<256> response;
-  deserializeJson(response, response_raw);
+	StaticJsonDocument<256> response;
+	deserializeJson(response, response_raw);
 
-  float result = response["value"];
+	float result = response["value"];
 
-  logger.logf("Current reading: %f", result);
-  return result;
+	logger.logf("Current reading: %f", result);
+	return result;
 }
 
 void GmailNotification(const char *title, const char *message)
 {
-  Device::device->postNotification(title, message);
+	Device::device->postNotification(title, message);
 }
 
 void printSetup()
 {
-  char msg[64] = "";
-  sprintf(msg, "Loaded firmware %s", VERSION);
-  logger.log(msg);
+	char msg[64] = "";
+	sprintf(msg, "Loaded firmware %s", VERSION);
+	logger.log(msg);
 
-  memset(msg, 0, 64);
-  String _ip = WiFi.localIP().toString();
+	memset(msg, 0, 64);
+	String _ip = WiFi.localIP().toString();
 
-  char ip[16];
-  _ip.toCharArray(ip, 16);
-  sprintf(msg, "Device IP %s", ip);
-  logger.log(msg);
+	char ip[16];
+	_ip.toCharArray(ip, 16);
+	sprintf(msg, "Device IP %s", ip);
+	logger.log(msg);
 }
